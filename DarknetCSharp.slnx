@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="DarknetCSharp/DarknetCSharp.csproj" />
+  <Project Path="DarknetCSharpExample/DarknetCSharpExample.csproj" />
+</Solution>
