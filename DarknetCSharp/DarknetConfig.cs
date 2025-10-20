@@ -7,10 +7,12 @@ public class DarknetConfig
 
     public string WeightsFilename { get; set; } = string.Empty;
 
+    public int? GpuIndex { get; set; }
+
     public DarknetConfig(string configurationFilename)
     {
         ConfigurationFilename = configurationFilename ?? string.Empty;
-        NamesFilename = Path.ChangeExtension(ConfigurationFilename, ".names") ?? string.Empty;
+        //NamesFilename = Path.ChangeExtension(ConfigurationFilename, ".names") ?? string.Empty;
         WeightsFilename = Path.ChangeExtension(ConfigurationFilename, ".weights") ?? string.Empty;
     }
 }
