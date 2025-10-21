@@ -38,17 +38,11 @@ public class Darknet : IDisposable
         };
     }
 
-    public ICollection<Prediction> Predict(string fileName)
+    public ICollection<Prediction> Predict(float[] imageData)
     {
         var results = new List<Prediction>();
 
-        DarknetImage image = DarknetApi.LoadImageV2(
-            fileName,
-            _networkDimensions.Width,
-            _networkDimensions.Height,
-            _networkDimensions.Channels);
-
-        DarknetApi.NetworkPredictImage(_networkPtr, image);
+        DarknetApi.NetworkPredictPtr(_networkPtr, imageData);
 
         // Get detections
         IntPtr detectionsPtr = DarknetApi.GetNetworkBoxes(
@@ -73,9 +67,9 @@ public class Darknet : IDisposable
 
             // Marshal the detection array
             var detections = DarknetDetectionUtils.MarshalDetectionArray(
-                    detectionsPtr,
-                    numDetections,
-                    _classNames);
+                detectionsPtr,
+                numDetections,
+                _classNames);
 
             results.AddRange(detections);
 
@@ -83,18 +77,8 @@ public class Darknet : IDisposable
             DarknetApi.FreeDetections(detectionsPtr, numDetections);
         }
 
-        DarknetApi.FreeImage(image);
-
         return results;
     }
-
-    //public ICollection<Prediction> Predict(byte[] imageData)
-    //{
-
-    // use void copy_image_from_bytes(DarknetImage im, char* pdata);
-    //    // TODO implement detection logic here
-    //    return Array.Empty<Prediction>();
-    //}
 
     public void Dispose()
     {
@@ -103,4 +87,6 @@ public class Darknet : IDisposable
             DarknetApi.FreeNeuralNetwork(ref _networkPtr);
         }
     }
+
+    public NetworkDimensions NetworkDimensions => _networkDimensions;
 }

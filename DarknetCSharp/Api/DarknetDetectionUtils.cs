@@ -24,7 +24,7 @@ public static class DarknetDetectionUtils
                 float[] probabilities = new float[detection.classes];
                 Marshal.Copy(detection.prob, probabilities, 0, detection.classes);
 
-                // Find the class with highest probability
+                // Find the class with the highest probability
                 float maxProb = 0f;
                 int bestClass = -1;
 
