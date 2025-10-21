@@ -10,12 +10,16 @@ public class Darknet : IDisposable
 
     private string[] _classNames = [];
 
+    private readonly DarknetConfig _config;
+
     public Darknet(DarknetConfig config)
     {
+        _config = config;
+
         _networkPtr = DarknetApi.LoadNeuralNetwork(
-            config.ConfigurationFilename,
-            config.NamesFilename,
-            config.WeightsFilename);
+            _config.ConfigurationFilename,
+            _config.NamesFilename,
+            _config.WeightsFilename);
 
         if (config.GpuIndex.HasValue)
         {
@@ -38,31 +42,34 @@ public class Darknet : IDisposable
     {
         var results = new List<Prediction>();
 
-        DarknetImage image = DarknetApi.LoadImageV2(fileName,
+        DarknetImage image = DarknetApi.LoadImageV2(
+            fileName,
             _networkDimensions.Width,
             _networkDimensions.Height,
             _networkDimensions.Channels);
-
-        // TODO - need to call free_image
 
         DarknetApi.NetworkPredictImage(_networkPtr, image);
 
         // Get detections
         IntPtr detectionsPtr = DarknetApi.GetNetworkBoxes(
             _networkPtr,
-            _networkDimensions.Width, _networkDimensions.Height,     // network dimensions
-            0.5f,      // detection threshold
-            0.5f,          // hier threshold
-            IntPtr.Zero,   // map (usually null)
-            1,             // relative coordinates
+            _networkDimensions.Width, _networkDimensions.Height,
+            _config.DetectionThreshold,
+            _config.HierarchyThreshold,
+            IntPtr.Zero,
+            1, // relative coordinates
             out int numDetections,
-            0              // letter boxing
+            0 // letter boxing
         );
 
         if (detectionsPtr != IntPtr.Zero && numDetections > 0)
         {
-            // TODO Apply Non-Maximum Suppression
-            //do_nms_sort(detectionsPtr, numDetections, _classNames.Length, 0.1f);
+            // Apply Non-Maximum Suppression
+            DarknetApi.DoNmsSort(
+                detectionsPtr,
+                numDetections,
+                _classNames.Length,
+                _config.NonMaximalSuppressionThreshold);
 
             // Marshal the detection array
             var detections = DarknetDetectionUtils.MarshalDetectionArray(
@@ -76,13 +83,15 @@ public class Darknet : IDisposable
             DarknetApi.FreeDetections(detectionsPtr, numDetections);
         }
 
-        // TODO - free_image
+        DarknetApi.FreeImage(image);
 
         return results;
     }
 
     //public ICollection<Prediction> Predict(byte[] imageData)
     //{
+
+    // use void copy_image_from_bytes(DarknetImage im, char* pdata);
     //    // TODO implement detection logic here
     //    return Array.Empty<Prediction>();
     //}

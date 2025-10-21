@@ -9,6 +9,12 @@ public class DarknetConfig
 
     public int? GpuIndex { get; set; }
 
+    public float DetectionThreshold { get; set; } = 0.25f;
+
+    public float HierarchyThreshold { get; set; } = 0.5f;
+
+    public float NonMaximalSuppressionThreshold { get; set; } = 0.45f;
+
     public DarknetConfig(string configurationFilename)
     {
         ConfigurationFilename = configurationFilename ?? string.Empty;

@@ -35,8 +35,11 @@ public static class DarknetApi
     [DllImport(YoloLibraryName, EntryPoint = "darknet_free_neural_network")]
     public static extern void FreeNeuralNetwork(ref IntPtr networkPtr);
 
-    [DllImport(YoloLibraryName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern void do_nms_sort(IntPtr detections, int total, int classes, float threshold);
+    [DllImport(YoloLibraryName, EntryPoint = "do_nms_sort")]
+    public static extern void DoNmsSort(IntPtr detections, int total, int classes, float threshold);
+    
+    [DllImport(YoloLibraryName, EntryPoint = "free_image")]
+    public static extern void FreeImage(DarknetImage image);
 
     [DllImport(YoloLibraryName, EntryPoint = "free_detections")]
     public static extern void FreeDetections(IntPtr detections, int count);
