@@ -22,26 +22,21 @@ if (!cap.IsOpened())
 using var frame = new Mat();
 using var frameResized = new Mat();
 
-var dims = darknet.NetworkDimensions;
-var imageSize = new Size(dims.Width, dims.Height);
-var chwBuffer = new float[dims.Width * dims.Height * dims.Channels];
+var networkDimensions = darknet.NetworkDimensions;
+var imageSize = new Size(networkDimensions.Width, networkDimensions.Height);
+var chwBuffer = new float[networkDimensions.Width * networkDimensions.Height * networkDimensions.Channels];
 
 while (true)
 {
     if (!cap.Read(frame) || frame.Empty())
         continue;
 
-    // Prefer AREA for downscaling (quality + speed) and LINEAR for upscaling
-    var interp = (frame.Width >= dims.Width && frame.Height >= dims.Height)
-        ? InterpolationFlags.Area
-        : InterpolationFlags.Linear;
-
-    Cv2.Resize(frame, frameResized, imageSize, interpolation: interp);
+    Cv2.Resize(frame, frameResized, imageSize, interpolation: InterpolationFlags.Nearest);
 
     // Convert to normalized RGB CHW float[] for Darknet into preallocated buffer
-    BgrMatToRgbImageInPlace(frameResized, dims, chwBuffer);
+    BgrMatToRgbImage(frameResized, networkDimensions, chwBuffer);
 
-    var predictions = darknet.Predict(chwBuffer);
+    ICollection<Prediction> predictions = darknet.Predict(chwBuffer);
 
     foreach (Prediction prediction in predictions)
     {
@@ -49,21 +44,13 @@ while (true)
     }
 }
 
-static unsafe void BgrMatToRgbImageInPlace(Mat mat, NetworkDimensions dimensions, float[] buffer)
+static unsafe void BgrMatToRgbImage(Mat mat, NetworkDimensions dimensions, float[] buffer)
 {
-    // Expect 8-bit, 3-channel BGR input already resized to network size
-    if (mat.Empty() || mat.Type() != MatType.CV_8UC3)
-        throw new ArgumentException("Expected non-empty 8-bit 3-channel BGR image.", nameof(mat));
-    if (mat.Width != dimensions.Width || mat.Height != dimensions.Height)
-        throw new ArgumentException("Mat size must match network dimensions.", nameof(dimensions));
-    if (buffer == null || buffer.Length < dimensions.Width * dimensions.Height * 3)
-        throw new ArgumentException("Destination buffer too small.", nameof(buffer));
-
     int w = dimensions.Width, h = dimensions.Height, hw = w * h;
     int rBase = 0, gBase = hw, bBase = 2 * hw;
     float inv255 = 1f / 255f;
 
-    byte* basePtr = (byte*)mat.DataPointer;
+    byte* basePtr = mat.DataPointer;
     int step = (int)mat.Step();
 
     for (int y = 0; y < h; y++)
