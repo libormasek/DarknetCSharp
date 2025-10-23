@@ -37,7 +37,7 @@ public class Darknet : IDisposable
             Channels = c
         };
 
-        _classNames = DarknetDetectionUtils.LoadClassNames(_config.NamesFilename);
+        _classNames = ClassNameUtils.LoadClassNames(_config.NamesFilename);
     }
 
     public Detection[] Predict(float[] imageData)
@@ -46,6 +46,7 @@ public class Darknet : IDisposable
 
         IntPtr detectionsPtr = IntPtr.Zero;
         int numberOfDetections = 0;
+
         try
         {
             // Get detections
@@ -69,7 +70,6 @@ public class Darknet : IDisposable
                     _classNames.Length,
                     _config.NonMaximalSuppressionThreshold);
 
-                // Marshal the detection array into preallocated list
                 Detection[] detections = DarknetDetectionUtils.ProcessDetections(
                     detectionsPtr,
                     numberOfDetections,
@@ -81,7 +81,6 @@ public class Darknet : IDisposable
         }
         finally
         {
-            // Free the detection memory if allocated
             if (detectionsPtr != IntPtr.Zero && numberOfDetections > 0)
             {
                 DarknetApi.FreeDetections(detectionsPtr, numberOfDetections);
