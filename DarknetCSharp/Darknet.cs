@@ -8,7 +8,7 @@ public class Darknet : IDisposable
 
     private readonly NetworkDimensions _networkDimensions;
 
-    private string[] _classNames = [];
+    private readonly string[] _classNames;
 
     private readonly DarknetConfig _config;
 
@@ -36,48 +36,59 @@ public class Darknet : IDisposable
             Height = h,
             Channels = c
         };
+
+        _classNames = DarknetDetectionUtils.LoadClassNames(_config.NamesFilename);
     }
 
-    public ICollection<Prediction> Predict(float[] imageData)
+    public Detection[] Predict(float[] imageData)
     {
-        var results = new List<Prediction>();
-
         DarknetApi.NetworkPredictPtr(_networkPtr, imageData);
 
-        // Get detections
-        IntPtr detectionsPtr = DarknetApi.GetNetworkBoxes(
-            _networkPtr,
-            _networkDimensions.Width, _networkDimensions.Height,
-            _config.DetectionThreshold,
-            _config.HierarchyThreshold,
-            IntPtr.Zero,
-            1, // relative coordinates
-            out int numDetections,
-            0 // letter boxing
-        );
-
-        if (detectionsPtr != IntPtr.Zero && numDetections > 0)
+        IntPtr detectionsPtr = IntPtr.Zero;
+        int numberOfDetections = 0;
+        try
         {
-            // Apply Non-Maximum Suppression
-            DarknetApi.DoNmsSort(
-                detectionsPtr,
-                numDetections,
-                _classNames.Length,
-                _config.NonMaximalSuppressionThreshold);
+            // Get detections
+            detectionsPtr = DarknetApi.GetNetworkBoxes(
+                _networkPtr,
+                _networkDimensions.Width, _networkDimensions.Height,
+                _config.DetectionThreshold,
+                _config.HierarchyThreshold,
+                IntPtr.Zero,
+                1, // relative coordinates
+                out numberOfDetections,
+                0 // letter boxing
+            );
 
-            // Marshal the detection array
-            var detections = DarknetDetectionUtils.MarshalDetectionArray(
-                detectionsPtr,
-                numDetections,
-                _classNames);
+            if (detectionsPtr != IntPtr.Zero && numberOfDetections > 0)
+            {
+                // Apply Non-Maximum Suppression
+                DarknetApi.DoNmsSort(
+                    detectionsPtr,
+                    numberOfDetections,
+                    _classNames.Length,
+                    _config.NonMaximalSuppressionThreshold);
 
-            results.AddRange(detections);
+                // Marshal the detection array into preallocated list
+                Detection[] detections = DarknetDetectionUtils.ProcessDetections(
+                    detectionsPtr,
+                    numberOfDetections,
+                    _config.DetectionThreshold,
+                    _classNames);
 
-            // Free the detection memory
-            DarknetApi.FreeDetections(detectionsPtr, numDetections);
+                return detections;
+            }
+        }
+        finally
+        {
+            // Free the detection memory if allocated
+            if (detectionsPtr != IntPtr.Zero && numberOfDetections > 0)
+            {
+                DarknetApi.FreeDetections(detectionsPtr, numberOfDetections);
+            }
         }
 
-        return results;
+        return [];
     }
 
     public void Dispose()

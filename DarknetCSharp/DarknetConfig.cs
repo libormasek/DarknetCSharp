@@ -2,10 +2,10 @@
 
 public class DarknetConfig
 {
-    public string ConfigurationFilename { get; set; } = string.Empty;
-    public string NamesFilename { get; set; } = string.Empty;
+    public string ConfigurationFilename { get; set; }
+    public string NamesFilename { get; set; }
 
-    public string WeightsFilename { get; set; } = string.Empty;
+    public string WeightsFilename { get; set; }
 
     public int? GpuIndex { get; set; }
 
@@ -15,9 +15,10 @@ public class DarknetConfig
 
     public float NonMaximalSuppressionThreshold { get; set; } = 0.45f;
 
-    public DarknetConfig(string configurationFilename)
+    public DarknetConfig(string configurationFilename, string namesFileName)
     {
         ConfigurationFilename = configurationFilename ?? string.Empty;
+        NamesFilename = namesFileName ?? string.Empty;
         WeightsFilename = Path.ChangeExtension(ConfigurationFilename, ".weights") ?? string.Empty;
     }
 }
