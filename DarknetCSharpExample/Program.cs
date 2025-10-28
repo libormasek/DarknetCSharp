@@ -1,11 +1,12 @@
 ﻿using DarknetCSharp;
-using OpenCvSharp;
+using System.Collections.Concurrent;
+using System.Diagnostics;
 
 var config = new DarknetConfig(
-    @"yolov4-tiny.cfg", 
-    @"coco.names")
+    @"cfg\yolov4-tiny.cfg",
+    @"cfg\coco.names")
 {
-    DetectionThreshold = 0.2f,
+    DetectionThreshold = 0.1f,
     GpuIndex = 0
 };
 
@@ -13,127 +14,225 @@ using var darknet = new Darknet(config);
 
 string rtspUrl = "rtsp://";
 
-Environment.SetEnvironmentVariable("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;udp|stimeout;5000000");
-
-using var cap = new VideoCapture(rtspUrl, VideoCaptureAPIs.FFMPEG);
-cap.Set(VideoCaptureProperties.BufferSize, 0);
-cap.Set(VideoCaptureProperties.Fps, 10);
-
-if (!cap.IsOpened())
-    throw new InvalidOperationException("Unable to open RTSP stream.");
-
-using var frame = new Mat();
-using var frameResized = new Mat();
-
 var networkDimensions = darknet.NetworkDimensions;
-var imageSize = new Size(networkDimensions.Width, networkDimensions.Height);
+
+// Pre-allocated buffer for image data to input into Darknet
 var chwBuffer = new float[networkDimensions.Width * networkDimensions.Height * networkDimensions.Channels];
 
-Cv2.NamedWindow("Detections", WindowFlags.AutoSize);
+// Frame buffer for processing
+var frameQueue = new ConcurrentQueue<byte[]>();
+var cancellationTokenSource = new CancellationTokenSource();
 
-while (true)
+Console.WriteLine("Starting RTSP stream processing with FFMpeg...");
+Console.WriteLine("Press 'q' to quit");
+
+// Start FFMpeg capture in background task
+var captureTask = Task.Run(() => CaptureFrames(rtspUrl, frameQueue, networkDimensions, cancellationTokenSource.Token));
+
+// Process frames
+await ProcessFrames(darknet, networkDimensions, chwBuffer, frameQueue, cancellationTokenSource);
+
+cancellationTokenSource.Cancel();
+await captureTask;
+
+static async Task CaptureFrames(string rtspUrl, ConcurrentQueue<byte[]> frameQueue, NetworkDimensions networkDimensions, CancellationToken cancellationToken)
 {
-    if (!cap.Read(frame) || frame.Empty())
-        continue;
+    try
+    {
+        var frameSize = networkDimensions.Width * networkDimensions.Height * 3; // RGB24
 
-    Cv2.Resize(frame, frameResized, imageSize, interpolation: InterpolationFlags.Nearest);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                // Use FFMpeg to capture frames and save them temporarily
+                var ffmpegProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "ffmpeg",
+                        Arguments = $"-i \"{rtspUrl}\" " +
+                                    $"-f rawvideo " +
+                                    $"-pix_fmt rgb24 -s {networkDimensions.Width}x{networkDimensions.Height} " +
+                                    $"-r 10 -",
+                        // TODO - use NVidia decoding with CUDA
+                        //Arguments = $"-hwaccel cuda -hwaccel_output_format cuda " +
+                        //            $"-i \"{rtspUrl}\" " +
+                        //            $"-vf \"scale_cuda={networkDimensions.Width}:{networkDimensions.Height},hwdownload,format=rgb24\" " +
+                        //            $"-f rawvideo -pix_fmt rgb24 " +
+                        //            $"-r 10 -",
+                        UseShellExecute = false,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true
+                    }
+                };
 
-    // Convert to normalized RGB CHW float[] for Darknet into preallocated buffer
-    BgrMatToRgbImage(frameResized, networkDimensions, chwBuffer);
+                ffmpegProcess.Start();
 
-    Detection[] detections = darknet.Predict(chwBuffer);
+                // Monitor stderr for FFMpeg logging
+                var stderrTask = Task.Run(() => MonitorFFmpegErrors(ffmpegProcess, cancellationToken));
 
-    // Draw boxes on the frame we display (same size used for inference)
-    DrawDetections(frameResized, detections);
+                var buffer = new byte[frameSize];
 
-    // Show window
-    Cv2.ImShow("Detections", frameResized);
-    int key = Cv2.WaitKey(1);
-    if (key == 27 || key == 'q') // Esc or 'q' to quit
-        break;
+                await using var stdout = ffmpegProcess.StandardOutput.BaseStream;
+                
+                while (!cancellationToken.IsCancellationRequested && !ffmpegProcess.HasExited)
+                {
+                    int totalBytesRead = 0;
+                    while (totalBytesRead < frameSize && !cancellationToken.IsCancellationRequested)
+                    {
+                        int bytesRead = await stdout.ReadAsync(buffer,
+                            totalBytesRead,
+                            frameSize - totalBytesRead,
+                            cancellationToken);
+
+                        if (bytesRead == 0) break;
+
+                        totalBytesRead += bytesRead;
+                    }
+
+                    if (totalBytesRead == frameSize)
+                    {
+                        frameQueue.Enqueue(buffer);
+
+                        // Limit queue size to prevent memory issues
+                        while (frameQueue.Count > 5)
+                        {
+                            frameQueue.TryDequeue(out _);
+                        }
+                    }
+                }
+
+                if (!ffmpegProcess.HasExited)
+                {
+                    ffmpegProcess.Kill();
+                }
+                
+                ffmpegProcess.WaitForExit();
+
+                // Wait for stderr monitoring to complete
+                await stderrTask;
+            }
+            catch (Exception ex) when (!(ex is OperationCanceledException))
+            {
+                Console.WriteLine($"FFMpeg process error: {ex.Message}");
+                await Task.Delay(1000, cancellationToken); // Wait before retry
+            }
+        }
+    }
+    catch (OperationCanceledException)
+    {
+        // Expected when cancellation is requested
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error in frame capture: {ex.Message}");
+    }
 }
 
-Cv2.DestroyAllWindows();
-
-static unsafe void BgrMatToRgbImage(Mat mat, NetworkDimensions dimensions, float[] buffer)
+static async Task ProcessFrames(Darknet darknet, NetworkDimensions networkDimensions, float[] chwBuffer,
+    ConcurrentQueue<byte[]> frameQueue, CancellationTokenSource cancellationTokenSource)
 {
-    int w = dimensions.Width, h = dimensions.Height, hw = w * h;
-    int rBase = 0, gBase = hw, bBase = 2 * hw;
-    float inv255 = 1f / 255f;
-
-    byte* basePtr = mat.DataPointer;
-    int step = (int)mat.Step();
-
-    for (int y = 0; y < h; y++)
+    while (!cancellationTokenSource.Token.IsCancellationRequested)
     {
-        byte* row = basePtr + y * step;
-        int rowIndex = y * w;
-        for (int x = 0; x < w; x++)
+        if (frameQueue.TryDequeue(out var frame))
         {
-            int idx = rowIndex + x;
-            int off = x * 3;
-            byte b = row[off + 0];
-            byte g = row[off + 1];
-            byte r = row[off + 2];
+            // Convert to normalized RGB CHW float[] for Darknet
+            RgbImageToChwBuffer(frame, networkDimensions, chwBuffer);
+            
+            Detection[] detections = darknet.Predict(chwBuffer);
 
-            buffer[rBase + idx] = r * inv255;
-            buffer[gBase + idx] = g * inv255;
-            buffer[bBase + idx] = b * inv255;
+            if (detections.Length > 0)
+            {
+                Console.WriteLine($"Processed frame with {detections.Length} detections");
+            }
+
+            foreach (var detection in detections)
+            {
+                Console.WriteLine($"  {detection.ClassName}: {detection.Probability:P1}");
+            }
+        }
+        else
+        {
+            await Task.Delay(10, cancellationTokenSource.Token);
+        }
+        
+        if (Console.KeyAvailable)
+        {
+            var key = Console.ReadKey(true);
+            if (key.Key == ConsoleKey.Q || key.Key == ConsoleKey.Escape)
+            {
+                cancellationTokenSource.Cancel();
+                break;
+            }
         }
     }
 }
 
-static void DrawDetections(Mat mat, IEnumerable<Detection> detections)
+static unsafe void RgbImageToChwBuffer(byte[] rgbBytes, NetworkDimensions dimensions, float[] buffer)
 {
-    int w = mat.Width;
-    int h = mat.Height;
-    int thickness = Math.Max(1, h / 240);
-    double fontScale = Math.Max(0.5, h / 720.0);
-    int baseline;
+    int w = dimensions.Width, h = dimensions.Height, hw = w * h;
+    float inv255 = 1f / 255f;
 
-    foreach (var p in detections)
+    // Pin the arrays and get pointers for direct memory access
+    fixed (byte* rgbPtr = rgbBytes)
+    fixed (float* bufferPtr = buffer)
     {
-        // Convert normalized DarknetBox (center x,y,w,h in [0..1]) to pixel box
-        float cx = p.BoundingBox.x * w;
-        float cy = p.BoundingBox.y * h;
-        float bw = p.BoundingBox.w * w;
-        float bh = p.BoundingBox.h * h;
+        byte* srcPtr = rgbPtr;
+        float* rPtr = bufferPtr;                    // R channel starts at offset 0
+        float* gPtr = bufferPtr + hw;               // G channel starts at offset hw
+        float* bPtr = bufferPtr + (2 * hw);         // B channel starts at offset 2*hw
 
-        int x1 = (int)Math.Round(cx - bw / 2f);
-        int y1 = (int)Math.Round(cy - bh / 2f);
-        int x2 = (int)Math.Round(cx + bw / 2f);
-        int y2 = (int)Math.Round(cy + bh / 2f);
+        // Process all pixels sequentially
+        for (int i = 0; i < hw; i++)
+        {
+            // Read RGB values from source (3 bytes per pixel)
+            byte r = *srcPtr++;
+            byte g = *srcPtr++;
+            byte b = *srcPtr++;
 
-        x1 = Math.Clamp(x1, 0, w - 1);
-        y1 = Math.Clamp(y1, 0, h - 1);
-        x2 = Math.Clamp(x2, 0, w - 1);
-        y2 = Math.Clamp(y2, 0, h - 1);
-        if (x2 <= x1 || y2 <= y1) continue;
+            // Write normalized values to CHW format buffers
+            *rPtr++ = r * inv255;
+            *gPtr++ = g * inv255;
+            *bPtr++ = b * inv255;
+        }
+    }
+}
 
-        // Color per class (simple deterministic hash)
-        int hash = p.ClassIndex;
-        byte r = (byte)(hash & 0xFF);
-        byte g = (byte)((hash >> 8) & 0xFF);
-        byte b = (byte)((hash >> 16) & 0xFF);
-        var color = new Scalar(b, g, r);
+static async Task MonitorFFmpegErrors(Process ffmpegProcess, CancellationToken cancellationToken)
+{
+    try
+    {
+        using var stderr = ffmpegProcess.StandardError;
+        string line;
 
-        // Draw rectangle
-        Cv2.Rectangle(mat, new Point(x1, y1), new Point(x2, y2), color, thickness);
+        while (!cancellationToken.IsCancellationRequested && !ffmpegProcess.HasExited)
+        {
+            line = await stderr.ReadLineAsync();
+            if (line == null) break;
 
-        // Label text
-        string label = $"{p.ClassName} {p.Probability:P0}";
-        var textSize = Cv2.GetTextSize(label, HersheyFonts.HersheySimplex, fontScale, thickness, out baseline);
-        baseline = Math.Max(baseline, 1);
-
-        int textX = x1;
-        int textY = Math.Max(y1 - 4, textSize.Height + baseline + 2);
-
-        // Filled background for readability
-        var bgTopLeft = new Point(textX, textY - textSize.Height - baseline);
-        var bgBottomRight = new Point(textX + textSize.Width + 4, textY + 2);
-        Cv2.Rectangle(mat, bgTopLeft, bgBottomRight, new Scalar(0, 0, 0), -1);
-
-        // Text
-        Cv2.PutText(mat, label, new Point(textX + 2, textY - baseline), HersheyFonts.HersheySimplex, fontScale, new Scalar(255, 255, 255), thickness, LineTypes.AntiAlias);
+            // Filter and display important FFmpeg messages
+            if (line.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("warning", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("could not", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("unable", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("timeout", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("connection", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("stream", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("codec", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("Input #", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("Output #", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("fps=", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"[FFmpeg] {line}");
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"Error monitoring FFmpeg stderr: {ex.Message}");
     }
 }
