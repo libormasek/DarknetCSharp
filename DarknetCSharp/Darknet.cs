@@ -16,15 +16,15 @@ public class Darknet : IDisposable
     {
         _config = config;
 
-        _networkPtr = DarknetApi.LoadNeuralNetwork(
-            _config.ConfigurationFilename,
-            _config.NamesFilename,
-            _config.WeightsFilename);
-
         if (config.GpuIndex.HasValue)
         {
             DarknetApi.SetGpuIndex(config.GpuIndex.Value);
         }
+        
+        _networkPtr = DarknetApi.LoadNeuralNetwork(
+            _config.ConfigurationFilename,
+            _config.NamesFilename,
+            _config.WeightsFilename);
 
         DarknetApi.ShowVersionInfo();
 
