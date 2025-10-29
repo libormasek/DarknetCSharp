@@ -42,7 +42,19 @@ public static class ImageUtils
         float thickness = Math.Max(2f, h / 240f);
         float fontSize = Math.Max(12f, h / 60f);
 
-        FontFamily fontFamily = SystemFonts.Families.First();
+        FontFamily fontFamily;
+        if (SystemFonts.TryGet("DejaVu Sans", out fontFamily) ||
+            SystemFonts.TryGet("Liberation Sans", out fontFamily) ||
+            SystemFonts.TryGet("Arial", out fontFamily) ||
+            SystemFonts.TryGet("Helvetica", out fontFamily))
+        {
+            // Successfully found a font
+        }
+        else
+        {
+            // Fallback to any available font
+            fontFamily = SystemFonts.Families.FirstOrDefault();
+        }
 
         var font = fontFamily.CreateFont(fontSize, FontStyle.Bold);
 
