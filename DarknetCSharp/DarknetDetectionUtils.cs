@@ -59,6 +59,7 @@ public static class DarknetDetectionUtils
             {
                 predictions[validPredictionCount] = new Detection
                 {
+                    TimeStampUtc = DateTime.UtcNow,
                     ClassName = classNames[bestClassIndex],
                     ClassIndex = bestClassIndex,
                     Probability = maxProbability,
