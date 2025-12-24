@@ -44,31 +44,39 @@ public static class DarknetDetectionUtils
                 continue;
 
             float[] probabilities = new float[detection.classes];
-            Marshal.Copy(detection.prob, probabilities, 0, detection.classes);
 
-            float maxProbability = probabilities[0];
-            int bestClassIndex = 0;
-            for (int j = 1; j < probabilities.Length; j++)
+            try
             {
-                if (probabilities[j] > maxProbability)
+                Marshal.Copy(detection.prob, probabilities, 0, detection.classes);
+
+                float maxProbability = probabilities[0];
+                int bestClassIndex = 0;
+                for (int j = 1; j < probabilities.Length; j++)
                 {
-                    maxProbability = probabilities[j];
-                    bestClassIndex = j;
+                    if (probabilities[j] > maxProbability)
+                    {
+                        maxProbability = probabilities[j];
+                        bestClassIndex = j;
+                    }
+                }
+
+                if (maxProbability >= detectionThreshold)
+                {
+                    predictions[validPredictionCount] = new Detection
+                    {
+                        TimeStampUtc = DateTime.UtcNow,
+                        ClassName = classNames[bestClassIndex],
+                        ClassIndex = bestClassIndex,
+                        Probability = maxProbability,
+                        BoundingBox = detection.bbox
+                    };
+
+                    validPredictionCount++;
                 }
             }
-
-            if (maxProbability >= detectionThreshold)
+            catch (NullReferenceException e)
             {
-                predictions[validPredictionCount] = new Detection
-                {
-                    TimeStampUtc = DateTime.UtcNow,
-                    ClassName = classNames[bestClassIndex],
-                    ClassIndex = bestClassIndex,
-                    Probability = maxProbability,
-                    BoundingBox = detection.bbox
-                };
-
-                validPredictionCount++;
+                Console.WriteLine(e);
             }
         }
 
