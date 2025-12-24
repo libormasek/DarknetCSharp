@@ -38,45 +38,36 @@ public static class DarknetDetectionUtils
             IntPtr detectionPtr = IntPtr.Add(detectionsPtr, i * DetectionSize);
             DarknetDetection detection = Marshal.PtrToStructure<DarknetDetection>(detectionPtr);
 
-            Console.WriteLine($"detection.prob {detection.prob}");
-
             if (detection.prob == IntPtr.Zero || detection.classes <= 0)
                 continue;
 
             float[] probabilities = new float[detection.classes];
 
-            try
+            Marshal.Copy(detection.prob, probabilities, 0, detection.classes);
+
+            float maxProbability = probabilities[0];
+            int bestClassIndex = 0;
+            for (int j = 1; j < probabilities.Length; j++)
             {
-                Marshal.Copy(detection.prob, probabilities, 0, detection.classes);
-
-                float maxProbability = probabilities[0];
-                int bestClassIndex = 0;
-                for (int j = 1; j < probabilities.Length; j++)
+                if (probabilities[j] > maxProbability)
                 {
-                    if (probabilities[j] > maxProbability)
-                    {
-                        maxProbability = probabilities[j];
-                        bestClassIndex = j;
-                    }
-                }
-
-                if (maxProbability >= detectionThreshold)
-                {
-                    predictions[validPredictionCount] = new Detection
-                    {
-                        TimeStampUtc = DateTime.UtcNow,
-                        ClassName = classNames[bestClassIndex],
-                        ClassIndex = bestClassIndex,
-                        Probability = maxProbability,
-                        BoundingBox = detection.bbox
-                    };
-
-                    validPredictionCount++;
+                    maxProbability = probabilities[j];
+                    bestClassIndex = j;
                 }
             }
-            catch (NullReferenceException e)
+
+            if (maxProbability >= detectionThreshold)
             {
-                Console.WriteLine(e);
+                predictions[validPredictionCount] = new Detection
+                {
+                    TimeStampUtc = DateTime.UtcNow,
+                    ClassName = classNames[bestClassIndex],
+                    ClassIndex = bestClassIndex,
+                    Probability = maxProbability,
+                    BoundingBox = detection.bbox
+                };
+
+                validPredictionCount++;
             }
         }
 
