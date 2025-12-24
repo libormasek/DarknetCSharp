@@ -38,6 +38,8 @@ public static class DarknetDetectionUtils
             IntPtr detectionPtr = IntPtr.Add(detectionsPtr, i * DetectionSize);
             DarknetDetection detection = Marshal.PtrToStructure<DarknetDetection>(detectionPtr);
 
+            Console.WriteLine($"detection.prob {detection.prob}");
+
             if (detection.prob == IntPtr.Zero || detection.classes <= 0)
                 continue;
 
