@@ -41,6 +41,11 @@ public struct DarknetDetection
     public int sort_class;
 
     /// <summary>
+    /// Used temporarily during NMS sorting @since 2025-12-02
+    /// </summary>
+    public float sort_score;
+
+    /// <summary>
     /// Pointer to uncertainty values (float*)
     /// </summary>
     public IntPtr uc;
