@@ -42,7 +42,6 @@ public static class DarknetDetectionUtils
                 continue;
 
             float[] probabilities = new float[detection.classes];
-
             Marshal.Copy(detection.prob, probabilities, 0, detection.classes);
 
             float maxProbability = probabilities[0];
